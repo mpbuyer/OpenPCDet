@@ -40,6 +40,18 @@ def parse_config():
     parser.add_argument('--ckpt_dir', type=str, default=None, help='specify a ckpt directory to be evaluated if needed')
     parser.add_argument('--save_to_file', action='store_true', default=False, help='')
     parser.add_argument('--infer_time', action='store_true', default=False, help='calculate inference latency')
+     parser.add_argument(
+        '--current_lidar_only',
+        action='store_true',
+        default=False,
+        help='for NuScenes export, keep only detections supported by the current LIDAR_TOP sample'
+    )
+    parser.add_argument(
+        '--min_current_lidar_points',
+        type=int,
+        default=1,
+        help='minimum number of current LIDAR_TOP points required to keep an exported NuScenes detection'
+    )
 
     args = parser.parse_args()
 
