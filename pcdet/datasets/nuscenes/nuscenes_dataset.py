@@ -253,10 +253,77 @@ class NuScenesDataset(DatasetTemplate):
 
         return data_dict
 
+    def _mask_prediction_dict(self, pred_dict, mask):
+        masked_pred_dict = {}
+        num_boxes = pred_dict['boxes_lidar'].shape[0]
+        for key, value in pred_dict.items():
+            if isinstance(value, np.ndarray) and value.shape[0] == num_boxes:
+                masked_pred_dict[key] = value[mask]
+            else:
+                masked_pred_dict[key] = value
+        return masked_pred_dict
+
+    def filter_det_annos_to_current_lidar(self, det_annos, min_lidar_points=1):
+        token_to_info = {info['token']: info for info in self.infos}
+        filtered_det_annos = []
+        total_boxes_before = 0
+        total_boxes_after = 0
+        missing_token_count = 0
+
+        for det in det_annos:
+            num_boxes = det['boxes_lidar'].shape[0]
+            total_boxes_before += num_boxes
+            if num_boxes == 0:
+                filtered_det_annos.append(det)
+                continue
+
+            info = token_to_info.get(det['metadata']['token'])
+            if info is None:
+                missing_token_count += 1
+                filtered_det_annos.append(det)
+                total_boxes_after += num_boxes
+                continue
+
+            lidar_path = self.root_path / info['lidar_path']
+            points = np.fromfile(str(lidar_path), dtype=np.float32, count=-1).reshape([-1, 5])[:, :3]
+            if points.shape[0] == 0:
+                point_counts = np.zeros(num_boxes, dtype=np.int32)
+            else:
+                point_indices = roiaware_pool3d_utils.points_in_boxes_cpu(points, det['boxes_lidar'][:, :7])
+                point_counts = point_indices.sum(axis=1)
+            keep_mask = point_counts >= max(1, int(min_lidar_points))
+
+            filtered_det = self._mask_prediction_dict(det, keep_mask)
+            filtered_det_annos.append(filtered_det)
+            total_boxes_after += int(keep_mask.sum())
+
+        if self.logger is not None:
+            self.logger.info(
+                'NuScenes export current-lidar filter kept %d / %d boxes (min_current_lidar_points=%d)%s'
+                % (
+                    total_boxes_after, total_boxes_before, max(1, int(min_lidar_points)),
+                    f', missing_tokens={missing_token_count}' if missing_token_count > 0 else ''
+                )
+            )
+
+        return filtered_det_annos
+
     def evaluation(self, det_annos, class_names, **kwargs):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
+        current_lidar_only = kwargs.get(
+            'current_lidar_only',
+            self.dataset_cfg.get('EVAL_FILTER_BY_CURRENT_LIDAR_POINTS', False)
+        )
+        min_current_lidar_points = kwargs.get(
+            'min_current_lidar_points',
+            self.dataset_cfg.get('EVAL_MIN_CURRENT_LIDAR_POINTS', 1)
+        )
+        if current_lidar_only:
+            det_annos = self.filter_det_annos_to_current_lidar(
+                det_annos, min_lidar_points=min_current_lidar_points
+            )
         nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
         nusc_annos = nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc)
         nusc_annos['meta'] = {
