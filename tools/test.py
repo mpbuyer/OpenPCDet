@@ -43,7 +43,7 @@ def parse_config():
     parser.add_argument(
         '--current_lidar_only',
         action='store_true',
-        default=False,
+        default=True,
         help='for NuScenes export, keep only detections supported by the current LIDAR_TOP sample'
     )
     parser.add_argument(
